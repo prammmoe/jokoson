@@ -84,6 +84,7 @@ private struct CompactWorkspaceView: View {
 
 private struct RegularWorkspaceView: View {
     @ObservedObject var workspace: JSONWorkspace
+    @State private var isMacSplitViewPresented = false
 
     var body: some View {
         NavigationSplitView {
@@ -135,12 +136,78 @@ private struct RegularWorkspaceView: View {
             .padding(22)
             .navigationSplitViewColumnWidth(min: 210, ideal: 240, max: 280)
         } detail: {
+            #if os(macOS)
+            Group {
+                if isMacSplitViewPresented {
+                    MacSplitWorkspaceView(workspace: workspace)
+                        .navigationTitle("JSON Viewer")
+                } else {
+                    WorkspaceSurface(workspace: workspace)
+                        .navigationTitle(workspace.mode == .input ? "Input" : "Viewer")
+                }
+            }
+            .toolbar {
+                WorkspaceToolbar(workspace: workspace, isSplitViewPresented: $isMacSplitViewPresented)
+            }
+            #else
             WorkspaceSurface(workspace: workspace)
                 .navigationTitle(workspace.mode == .input ? "Input" : "Viewer")
-                .toolbar { WorkspaceToolbar(workspace: workspace) }
+                .toolbar {
+                    WorkspaceToolbar(workspace: workspace)
+                }
+            #endif
         }
     }
 }
+
+#if os(macOS)
+private struct MacSplitWorkspaceView: View {
+    @ObservedObject var workspace: JSONWorkspace
+
+    var body: some View {
+        HSplitView {
+            MacSplitPane(title: "Input", systemImage: "square.and.pencil") {
+                InputSurface(workspace: workspace)
+            }
+            .frame(minWidth: 360, idealWidth: 520)
+
+            MacSplitPane(title: "Viewer", systemImage: "list.bullet.rectangle") {
+                ViewerSurface(workspace: workspace)
+            }
+            .frame(minWidth: 360, idealWidth: 520)
+        }
+        .background(Color.primary.opacity(0.012))
+        .accessibilityIdentifier("macSplitWorkspace")
+    }
+}
+
+private struct MacSplitPane<Content: View>: View {
+    let title: String
+    let systemImage: String
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 7) {
+                Image(systemName: systemImage)
+                    .foregroundStyle(.secondary)
+                Text(title)
+                    .font(.headline)
+                Spacer()
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 11)
+            .background(.bar)
+
+            Divider()
+
+            content()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+#endif
 
 private struct WorkspaceSurface: View {
     @ObservedObject var workspace: JSONWorkspace
@@ -377,7 +444,10 @@ private struct JSONTreeRowView: View {
 
 @MainActor
 @ToolbarContentBuilder
-private func WorkspaceToolbar(workspace: JSONWorkspace) -> some ToolbarContent {
+private func WorkspaceToolbar(
+    workspace: JSONWorkspace,
+    isSplitViewPresented: Binding<Bool>? = nil
+) -> some ToolbarContent {
     ToolbarItem(placement: .principal) {
         Picker("Mode", selection: Binding(get: { workspace.mode }, set: { workspace.selectMode($0) })) {
             ForEach(WorkspaceMode.allCases) { mode in
@@ -390,6 +460,20 @@ private func WorkspaceToolbar(workspace: JSONWorkspace) -> some ToolbarContent {
     }
 
     ToolbarItemGroup(placement: .primaryAction) {
+        #if os(macOS)
+        if let isSplitViewPresented {
+            Toggle(isOn: isSplitViewPresented) {
+                Label(
+                    isSplitViewPresented.wrappedValue ? "Hide Split View" : "Show Split View",
+                    systemImage: "rectangle.split.2x1"
+                )
+            }
+            .toggleStyle(.button)
+            .help(isSplitViewPresented.wrappedValue ? "Hide Input and Viewer split view" : "Show Input and Viewer split view")
+            .accessibilityIdentifier("splitViewButton")
+        }
+        #endif
+
         Button {
             workspace.isFileImporterPresented = true
         } label: {
