@@ -1,3 +1,10 @@
+//
+//  ContentView.swift
+//  Jokoson
+//
+//  Created by Pramuditha Muhammad Ikhwan on 12/07/26.
+//
+
 import SwiftUI
 import UniformTypeIdentifiers
 

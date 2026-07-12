@@ -1,3 +1,10 @@
+//
+//  JokosonUITests.swift
+//  JokosonUITests
+//
+//  Created by Pramuditha Muhammad Ikhwan on 12/07/26.
+//
+
 import XCTest
 
 final class JokosonUITests: XCTestCase {

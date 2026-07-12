@@ -1,3 +1,10 @@
+//
+//  JSONSyntaxHighlighting.swift
+//  Jokoson
+//
+//  Created by Pramuditha Muhammad Ikhwan on 12/07/26.
+//
+
 import Foundation
 import SwiftUI
 

@@ -1,3 +1,10 @@
+//
+//  JSONParser.swift
+//  Jokoson
+//
+//  Created by Pramuditha Muhammad Ikhwan on 12/07/26.
+//
+
 import Foundation
 
 struct JSONParseError: Error, Equatable, LocalizedError, Sendable {

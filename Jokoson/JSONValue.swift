@@ -1,3 +1,10 @@
+//
+//  JSONValue.swift
+//  Jokoson
+//
+//  Created by Pramuditha Muhammad Ikhwan on 12/07/26.
+//
+
 import Foundation
 
 struct JSONMember: Equatable, Sendable, Identifiable {
