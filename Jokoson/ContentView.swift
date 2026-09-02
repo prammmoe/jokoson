@@ -48,6 +48,11 @@ struct ContentView: View {
         } message: {
             Text(workspace.parseError?.errorDescription ?? "The pasted content could not be parsed as JSON.")
         }
+        .alert("No JSON Entered", isPresented: $workspace.isEmptyJSONAlertPresented) {
+            Button("OK", role: .cancel) { }
+        } message: {
+            Text("Paste or enter JSON before opening Viewer.")
+        }
         .onChange(of: workspace.parseError) { _, parseError in
             isInvalidJSONAlertPresented = parseError != nil
         }
@@ -76,7 +81,7 @@ private struct CompactWorkspaceView: View {
     var body: some View {
         NavigationStack {
             WorkspaceSurface(workspace: workspace)
-                .navigationTitle("JSON Viewer")
+                .navigationTitle("Jokoson")
                 .toolbar { WorkspaceToolbar(workspace: workspace) }
         }
     }
@@ -90,7 +95,7 @@ private struct RegularWorkspaceView: View {
         NavigationSplitView {
             VStack(alignment: .leading, spacing: 18) {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("JSON Viewer")
+                    Text("Jokoson")
                         .font(.system(.title2, design: .rounded).weight(.semibold))
                 }
 
@@ -128,24 +133,24 @@ private struct RegularWorkspaceView: View {
                 }
 
                 Spacer()
-
-                Text("Nothing leaves this device.")
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
             }
             .padding(22)
+            #if os(macOS)
+            .padding(.top, 38)
+            #endif
             .navigationSplitViewColumnWidth(min: 210, ideal: 240, max: 280)
         } detail: {
             #if os(macOS)
             Group {
                 if isMacSplitViewPresented {
                     MacSplitWorkspaceView(workspace: workspace)
-                        .navigationTitle("JSON Viewer")
+                        .navigationTitle("Jokoson")
                 } else {
                     WorkspaceSurface(workspace: workspace)
                         .navigationTitle(workspace.mode == .input ? "Input" : "Viewer")
                 }
             }
+            .padding(.top, 38)
             .toolbar {
                 WorkspaceToolbar(workspace: workspace, isSplitViewPresented: $isMacSplitViewPresented)
             }
@@ -157,6 +162,8 @@ private struct RegularWorkspaceView: View {
                 }
             #endif
         }
+        .navigationSplitViewStyle(.balanced)
+        .frame(minWidth: 960, minHeight: 600)
     }
 }
 
@@ -307,52 +314,174 @@ private struct InputSurface: View {
 
 private struct ViewerSurface: View {
     @ObservedObject var workspace: JSONWorkspace
+    @State private var isSearchPresented = false
 
     var body: some View {
         Group {
             if workspace.document != nil {
-                VStack(spacing: 0) {
-                    if !workspace.searchQuery.isEmpty {
-                        HStack {
-                            Label("\(workspace.matchCount) matching nodes", systemImage: "magnifyingglass")
-                            Spacer()
-                        }
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 24)
-                        .padding(.vertical, 9)
-                        .background(Color.primary.opacity(0.035))
-                    }
+                #if os(macOS)
+                HSplitView {
+                    ViewerTreePane(workspace: workspace)
+                        .frame(minWidth: 420, idealWidth: 620, maxWidth: 900, maxHeight: .infinity)
 
-                    if workspace.visibleRows.isEmpty && !workspace.searchQuery.isEmpty {
-                        ContentUnavailableView("No Matches", systemImage: "magnifyingglass", description: Text("Try a different key or value."))
-                    } else {
-                        ScrollView {
-                            LazyVStack(alignment: .leading, spacing: 0) {
-                                ForEach(workspace.visibleRows) { row in
-                                    JSONTreeRowView(row: row, workspace: workspace)
-                                }
-                            }
-                            .padding(.vertical, 10)
-                            .padding(.horizontal, 12)
-                        }
-                        .textSelection(.enabled)
-                    }
+                    JSONTableViewerPane(workspace: workspace)
+                        .frame(minWidth: 0, idealWidth: 360, maxHeight: .infinity)
                 }
+                #else
+                ViewerTreePane(workspace: workspace)
+                #endif
             } else {
                 ContentUnavailableView("No JSON Loaded", systemImage: "curlybraces", description: Text("Paste JSON or open a local .json file to begin."))
             }
         }
-        .searchable(text: $workspace.searchQuery, placement: .toolbar, prompt: "Search keys and values")
+        #if !os(macOS)
+        .frame(maxWidth: 980, maxHeight: .infinity)
+        #endif
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .searchable(text: $workspace.searchQuery, isPresented: $isSearchPresented, placement: .toolbar, prompt: "Search keys and values")
+        .onChange(of: workspace.viewerSearchFocusRequest) { _, _ in
+            isSearchPresented = true
+        }
+        #if os(macOS)
+        .background {
+            ZStack {
+                ViewerSearchFocusBridge(request: workspace.viewerSearchFocusRequest)
+                ViewerFindShortcutMonitor()
+            }
+        }
+        #endif
         .accessibilityIdentifier("jsonViewer")
     }
 }
+
+private struct ViewerTreePane: View {
+    @ObservedObject var workspace: JSONWorkspace
+
+    var body: some View {
+        VStack(spacing: 0) {
+            if !workspace.searchQuery.isEmpty {
+                HStack {
+                    Label("\(workspace.matchCount) matching nodes", systemImage: "magnifyingglass")
+                    Spacer()
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 24)
+                .padding(.vertical, 9)
+                .background(Color.primary.opacity(0.035))
+            }
+
+            if workspace.visibleRows.isEmpty && !workspace.searchQuery.isEmpty {
+                ContentUnavailableView("No Matches", systemImage: "magnifyingglass", description: Text("Try a different key or value."))
+            } else {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 0) {
+                        ForEach(workspace.visibleRows) { row in
+                            JSONTreeRowView(row: row, workspace: workspace)
+                        }
+                    }
+                    .padding(.vertical, 10)
+                    .padding(.horizontal, 12)
+                }
+                .textSelection(.enabled)
+            }
+        }
+    }
+}
+
+#if os(macOS)
+private struct JSONTableViewerPane: View {
+    @ObservedObject var workspace: JSONWorkspace
+
+    var body: some View {
+        Table(workspace.tableRows) {
+            TableColumn("Name") { row in
+                Text(row.name)
+                    .lineLimit(1)
+            }
+            .width(min: 24, ideal: 160)
+
+            TableColumn("Value") { row in
+                Text(row.displayValue)
+                    .lineLimit(1)
+                    .textSelection(.enabled)
+            }
+            .width(min: 40, ideal: 220)
+        }
+        .frame(minWidth: 0, maxWidth: .infinity, maxHeight: .infinity)
+        .layoutPriority(-1)
+        .font(.system(size: 12, design: .monospaced))
+        .accessibilityIdentifier("jsonTableViewer")
+    }
+}
+#endif
+
+#if os(macOS)
+private struct ViewerSearchFocusBridge: NSViewRepresentable {
+    let request: Int
+
+    func makeNSView(context: Context) -> NSView { NSView() }
+
+    func updateNSView(_ view: NSView, context: Context) {
+        guard request > 0 else { return }
+        DispatchQueue.main.async {
+            focusViewerSearch(in: view.window)
+        }
+    }
+}
+
+private struct ViewerFindShortcutMonitor: NSViewRepresentable {
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        context.coordinator.install(on: view)
+        return view
+    }
+
+    func updateNSView(_ view: NSView, context: Context) { }
+
+    final class Coordinator {
+        private var monitor: Any?
+        private weak var view: NSView?
+
+        func install(on view: NSView) {
+            self.view = view
+            monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+                guard event.modifierFlags.contains(.command),
+                      event.charactersIgnoringModifiers?.lowercased() == "f" else {
+                    return event
+                }
+
+                DispatchQueue.main.async {
+                    focusViewerSearch(in: self?.view?.window)
+                }
+                return nil
+            }
+        }
+
+        deinit {
+            if let monitor {
+                NSEvent.removeMonitor(monitor)
+            }
+        }
+    }
+}
+
+private func focusViewerSearch(in window: NSWindow?) {
+    window?.toolbar?.items
+        .compactMap { $0 as? NSSearchToolbarItem }
+        .first?
+        .beginSearchInteraction()
+}
+#endif
 
 private struct JSONTreeRowView: View {
     let row: JSONTreeRow
     @ObservedObject var workspace: JSONWorkspace
     @State private var isHovered = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    private let jsonFontSize: CGFloat = 12
 
     var body: some View {
         HStack(spacing: 7) {
@@ -363,7 +492,7 @@ private struct JSONTreeRowView: View {
                 Color.clear.frame(width: 22)
 
                 Text(row.value.closingDelimiter)
-                    .font(.system(.body, design: .monospaced))
+                    .font(.system(size: jsonFontSize, design: .monospaced))
                     .foregroundStyle(JSONSyntaxTheme.punctuation)
             } else {
                 if row.value.isContainer {
@@ -385,14 +514,14 @@ private struct JSONTreeRowView: View {
 
                 if let key = row.key {
                     Text(key)
-                        .font(.system(.body, design: .monospaced).weight(.medium))
+                        .font(.system(size: jsonFontSize, design: .monospaced).weight(.medium))
                         .foregroundStyle(JSONSyntaxTheme.key)
                     Text(":")
                         .foregroundStyle(JSONSyntaxTheme.punctuation)
                 }
 
                 Text(valueText)
-                    .font(.system(.body, design: .monospaced))
+                    .font(.system(size: jsonFontSize, design: .monospaced))
                     .foregroundStyle(JSONSyntaxTheme.valueColor(for: row.value))
                     .lineLimit(1)
             }
@@ -400,9 +529,12 @@ private struct JSONTreeRowView: View {
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 8)
-        .frame(minHeight: 34)
-        .background(row.isMatch ? Color.primary.opacity(0.09) : (isHovered ? Color.primary.opacity(0.035) : .clear), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+        .frame(minHeight: 24)
+        .background(rowBackground, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
         .contentShape(Rectangle())
+        .onTapGesture {
+            workspace.selectTreeRow(row)
+        }
         .contextMenu {
             Button("Copy Value", systemImage: "doc.on.doc") {
                 copy(row.value.jsonString(pretty: true))
@@ -416,6 +548,16 @@ private struct JSONTreeRowView: View {
         #endif
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilityLabel)
+    }
+
+    private var rowBackground: Color {
+        if !row.isClosing && row.path == workspace.selectedPath {
+            return Color.accentColor.opacity(0.18)
+        }
+        if row.isMatch {
+            return Color.primary.opacity(0.09)
+        }
+        return isHovered ? Color.primary.opacity(0.035) : .clear
     }
 
     private var accessibilityLabel: String {
@@ -546,6 +688,12 @@ struct JokosonCommands: Commands {
     let workspace: JSONWorkspace
 
     var body: some Commands {
+        CommandGroup(after: .textEditing) {
+            Button("Find in Viewer") { workspace.requestViewerSearchFocus() }
+                .keyboardShortcut("f", modifiers: [.command])
+                .disabled(workspace.mode != .viewer)
+        }
+
         CommandGroup(after: .newItem) {
             Button("Open JSON File…") { workspace.isFileImporterPresented = true }
                 .keyboardShortcut("o", modifiers: [.command])

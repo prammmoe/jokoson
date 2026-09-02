@@ -137,6 +137,11 @@ struct JSONPath: Hashable, Sendable, CustomStringConvertible {
         JSONPath(components: components + [component])
     }
 
+    var parent: JSONPath? {
+        guard !components.isEmpty else { return nil }
+        return JSONPath(components: Array(components.dropLast()))
+    }
+
     var description: String {
         components.reduce("$") { result, component in
             switch component {
@@ -164,4 +169,16 @@ struct JSONTreeRow: Identifiable, Equatable, Sendable {
     let isClosing: Bool
 
     var id: String { path.description + (isClosing ? ":closing" : "") }
+}
+
+struct JSONTableRow: Identifiable, Equatable, Sendable {
+    let path: JSONPath
+    let name: String
+    let value: JSONValue
+
+    var id: String { path.description }
+
+    var displayValue: String {
+        value.isContainer ? value.summary : value.jsonString(pretty: false)
+    }
 }

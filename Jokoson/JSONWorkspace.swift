@@ -32,6 +32,9 @@ final class JSONWorkspace: ObservableObject {
     @Published var expandedPaths: Set<JSONPath> = []
     @Published var notice: String?
     @Published var isFileImporterPresented = false
+    @Published var isEmptyJSONAlertPresented = false
+    @Published private(set) var viewerSearchFocusRequest = 0
+    @Published private(set) var selectedPath: JSONPath = .root
 
     var visibleRows: [JSONTreeRow] {
         guard let document else { return [] }
@@ -53,6 +56,27 @@ final class JSONWorkspace: ObservableObject {
         let query = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let document, !query.isEmpty else { return 0 }
         return directMatchingPaths(in: document.root, query: query).count
+    }
+
+    var tableRows: [JSONTableRow] {
+        guard let contextPath = tableContextPath, let contextValue = value(at: contextPath) else { return [] }
+
+        switch contextValue {
+        case .object(let members):
+            return members.map { member in
+                JSONTableRow(
+                    path: contextPath.appending(.member(ordinal: member.ordinal, key: member.key)),
+                    name: member.key,
+                    value: member.value
+                )
+            }
+        case .array(let values):
+            return values.enumerated().map { index, value in
+                JSONTableRow(path: contextPath.appending(.index(index)), name: String(index), value: value)
+            }
+        default:
+            return []
+        }
     }
 
     func parse() {
@@ -130,6 +154,11 @@ final class JSONWorkspace: ObservableObject {
         }
     }
 
+    func selectTreeRow(_ row: JSONTreeRow) {
+        guard !row.isClosing else { return }
+        selectedPath = row.path
+    }
+
     func selectMode(_ requestedMode: WorkspaceMode) {
         switch requestedMode {
         case .input:
@@ -137,7 +166,7 @@ final class JSONWorkspace: ObservableObject {
         case .viewer:
             guard !rawText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                 mode = .input
-                notice = "Enter JSON to open Viewer"
+                isEmptyJSONAlertPresented = true
                 return
             }
 
@@ -165,6 +194,11 @@ final class JSONWorkspace: ObservableObject {
         selectMode(.viewer)
     }
 
+    func requestViewerSearchFocus() {
+        guard mode == .viewer else { return }
+        viewerSearchFocusRequest += 1
+    }
+
     func reset() {
         mode = .input
         rawText = ""
@@ -174,6 +208,9 @@ final class JSONWorkspace: ObservableObject {
         searchQuery = ""
         expandedPaths.removeAll()
         notice = nil
+        isEmptyJSONAlertPresented = false
+        viewerSearchFocusRequest = 0
+        selectedPath = .root
     }
 
     private func apply(_ result: Result<JSONValue, JSONParseError>, sourceText: String) {
@@ -183,12 +220,38 @@ final class JSONWorkspace: ObservableObject {
             document = JSONDocument(root: value, sourceText: sourceText)
             parseError = nil
             expandedPaths = [.root]
+            selectedPath = .root
             mode = .viewer
         case .failure(let error):
             document = nil
             parseError = error
+            selectedPath = .root
             mode = .input
         }
+    }
+
+    private var tableContextPath: JSONPath? {
+        guard let selectedValue = value(at: selectedPath) else { return nil }
+        return selectedValue.isContainer ? selectedPath : (selectedPath.parent ?? .root)
+    }
+
+    private func value(at path: JSONPath) -> JSONValue? {
+        guard var current = document?.root else { return nil }
+
+        for component in path.components {
+            switch (current, component) {
+            case (.object(let members), .member(let ordinal, let key)):
+                guard let member = members.first(where: { $0.ordinal == ordinal && $0.key == key }) else { return nil }
+                current = member.value
+            case (.array(let values), .index(let index)):
+                guard values.indices.contains(index) else { return nil }
+                current = values[index]
+            default:
+                return nil
+            }
+        }
+
+        return current
     }
 
     private func matchingPaths(in value: JSONValue, query: String) -> Set<JSONPath> {

@@ -8,6 +8,10 @@
 import Testing
 @testable import Jokoson
 
+#if os(macOS)
+import AppKit
+#endif
+
 struct JokosonTests {
     @Test func parsesOrderedNestedJSON() throws {
         let value = try JSONParser().parse("{\"first\":1,\"second\":[true,null,{\"name\":\"Ada\"}]}")
@@ -84,6 +88,55 @@ struct JokosonTests {
         #expect(workspace.expandedPaths.isEmpty)
     }
 
+    @Test @MainActor func workspaceShowsAlertWhenViewerIsRequestedWithoutJSON() {
+        let workspace = JSONWorkspace()
+
+        workspace.selectMode(.viewer)
+
+        #expect(workspace.mode == .input)
+        #expect(workspace.isEmptyJSONAlertPresented)
+    }
+
+    @Test @MainActor func workspaceRequestsViewerSearchFocusOnlyInViewerMode() {
+        let workspace = JSONWorkspace()
+
+        workspace.requestViewerSearchFocus()
+        #expect(workspace.viewerSearchFocusRequest == 0)
+
+        workspace.rawText = "{\"name\":\"Ada\"}"
+        _ = workspace.parseSynchronously()
+        workspace.requestViewerSearchFocus()
+
+        #expect(workspace.mode == .viewer)
+        #expect(workspace.viewerSearchFocusRequest == 1)
+    }
+
+    @Test @MainActor func tableRowsFollowSelectedContainerOrScalarParent() {
+        let workspace = JSONWorkspace()
+        workspace.rawText = "{\"data\":{\"type\":\"checkout\",\"products\":[{\"id\":1,\"active\":true}]}}"
+        _ = workspace.parseSynchronously()
+        workspace.expandAll()
+
+        #expect(workspace.tableRows.map(\.name) == ["data"])
+
+        guard let dataRow = workspace.visibleRows.first(where: { $0.key == "data" }),
+              let typeRow = workspace.visibleRows.first(where: { $0.key == "type" }),
+              let productsRow = workspace.visibleRows.first(where: { $0.key == "products" }) else {
+            Issue.record("Expected rows for data, type, and products")
+            return
+        }
+
+        workspace.selectTreeRow(dataRow)
+        #expect(workspace.tableRows.map(\.name) == ["type", "products"])
+
+        workspace.selectTreeRow(typeRow)
+        #expect(workspace.tableRows.map(\.name) == ["type", "products"])
+
+        workspace.selectTreeRow(productsRow)
+        #expect(workspace.tableRows.map(\.name) == ["0"])
+        #expect(workspace.tableRows.first?.displayValue == "{ … }")
+    }
+
     @Test func jsonPathsAreReadable() {
         let path = JSONPath.root
             .appending(.member(ordinal: 0, key: "users"))
@@ -91,4 +144,39 @@ struct JokosonTests {
             .appending(.member(ordinal: 0, key: "display name"))
         #expect(path.description == "$.users[0][\"display name\"]")
     }
+
+    #if os(macOS)
+    @Test func syntaxHighlighterAssignsMutedTokenColors() {
+        let source = "{\"key\":\"value\",\"number\":12,\"boolean\":true,\"empty\":null}"
+        let highlighted = JSONSyntaxHighlighter.attributedString(for: source)
+
+        func color(at token: String) -> NSColor? {
+            let range = (source as NSString).range(of: token)
+            return highlighted.attribute(.foregroundColor, at: range.location, effectiveRange: nil) as? NSColor
+        }
+
+        let key = color(at: "\"key\"")
+        let string = color(at: "\"value\"")
+        let number = color(at: "12")
+        let boolean = color(at: "true")
+        let null = color(at: "null")
+        let punctuation = color(at: ":")
+
+        #expect(key != nil)
+        #expect(string != nil)
+        #expect(number != nil)
+        #expect(boolean != nil)
+        #expect(null != nil)
+        #expect(punctuation != nil)
+        func rgb(_ color: NSColor) -> [CGFloat] {
+            let resolved = color.usingColorSpace(.deviceRGB)!
+            return [resolved.redComponent, resolved.greenComponent, resolved.blueComponent]
+        }
+
+        #expect(rgb(key!) != rgb(string!))
+        #expect(rgb(string!) != rgb(number!))
+        #expect(rgb(number!) != rgb(boolean!))
+        #expect(rgb(null!) == rgb(punctuation!))
+    }
+    #endif
 }

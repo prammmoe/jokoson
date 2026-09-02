@@ -17,6 +17,7 @@ struct JokosonApp: App {
             ContentView(workspace: workspace)
         }
         .defaultSize(width: 980, height: 720)
+        .windowResizability(.contentMinSize)
         .commands {
             JokosonCommands(workspace: workspace)
         }

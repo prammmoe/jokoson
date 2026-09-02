@@ -17,22 +17,71 @@ typealias JSONSyntaxPlatformColor = UIColor
 #endif
 
 enum JSONSyntaxTheme {
-    static var key: Color { .blue }
-    static var string: Color { .green }
-    static var number: Color { .orange }
-    static var boolean: Color { .purple }
-    static var null: Color { .secondary }
-    static var punctuation: Color { .secondary }
+    static var text: Color { Color(platformColor(for: .text)) }
+    static var key: Color { text }
+    static var string: Color { Color(platformColor(for: .string)) }
+    static var number: Color { Color(platformColor(for: .number)) }
+    static var boolean: Color { Color(platformColor(for: .boolean)) }
+    static var null: Color { Color(platformColor(for: .null)) }
+    static var punctuation: Color { Color(platformColor(for: .punctuation)) }
 
     static func valueColor(for value: JSONValue) -> Color {
         switch value {
-        case .object, .array: return .secondary
+        case .object, .array: return punctuation
         case .string: return string
         case .number: return number
         case .bool: return boolean
         case .null: return null
         }
     }
+
+    enum Token {
+        case text, key, string, number, boolean, null, punctuation
+    }
+
+    static func platformColor(for token: Token) -> JSONSyntaxPlatformColor {
+        switch token {
+        case .text, .key: return adaptive(light: rgb(0x202124), dark: rgb(0xD4D4D4))
+        case .string: return adaptive(light: rgb(0x087F23), dark: rgb(0x7DCB75))
+        case .number: return adaptive(light: rgb(0xD83A34), dark: rgb(0xE98078))
+        case .boolean: return adaptive(light: rgb(0xB66312), dark: rgb(0xD5A15D))
+        case .null, .punctuation: return adaptive(light: rgb(0x7A7F87), dark: rgb(0x9097A1))
+        }
+    }
+
+    static var activeLine: JSONSyntaxPlatformColor {
+        adaptive(light: rgb(0xFFF8CE), dark: rgb(0x322D20))
+    }
+
+    #if os(macOS)
+    private static func adaptive(light: NSColor, dark: NSColor) -> NSColor {
+        NSColor(name: nil) { appearance in
+            appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? dark : light
+        }
+    }
+
+    private static func rgb(_ value: UInt) -> NSColor {
+        NSColor(
+            red: CGFloat((value >> 16) & 0xFF) / 255,
+            green: CGFloat((value >> 8) & 0xFF) / 255,
+            blue: CGFloat(value & 0xFF) / 255,
+            alpha: 1
+        )
+    }
+    #else
+    private static func adaptive(light: UIColor, dark: UIColor) -> UIColor {
+        UIColor { traits in traits.userInterfaceStyle == .dark ? dark : light }
+    }
+
+    private static func rgb(_ value: UInt) -> UIColor {
+        UIColor(
+            red: CGFloat((value >> 16) & 0xFF) / 255,
+            green: CGFloat((value >> 8) & 0xFF) / 255,
+            blue: CGFloat(value & 0xFF) / 255,
+            alpha: 1
+        )
+    }
+    #endif
 }
 
 enum JSONSyntaxHighlighter {
@@ -100,9 +149,7 @@ enum JSONSyntaxHighlighter {
     }
     #endif
 
-    private enum Token {
-        case text, key, string, number, boolean, null, punctuation
-    }
+    private typealias Token = JSONSyntaxTheme.Token
 
     private static func add(_ token: Token, to result: NSMutableAttributedString, range: NSRange) {
         guard range.length > 0 else { return }
@@ -110,27 +157,7 @@ enum JSONSyntaxHighlighter {
     }
 
     private static func platformColor(for token: Token) -> JSONSyntaxPlatformColor {
-        #if os(macOS)
-        switch token {
-        case .text: return .labelColor
-        case .key: return .systemBlue
-        case .string: return .systemGreen
-        case .number: return .systemOrange
-        case .boolean: return .systemPurple
-        case .null: return .secondaryLabelColor
-        case .punctuation: return .tertiaryLabelColor
-        }
-        #else
-        switch token {
-        case .text: return .label
-        case .key: return .systemBlue
-        case .string: return .systemGreen
-        case .number: return .systemOrange
-        case .boolean: return .systemPurple
-        case .null: return .secondaryLabel
-        case .punctuation: return .tertiaryLabel
-        }
-        #endif
+        JSONSyntaxTheme.platformColor(for: token)
     }
 
     private static func endOfString(in source: NSString, startingAt start: Int) -> Int {
@@ -216,15 +243,15 @@ private struct MacSyntaxHighlightedTextEditor: NSViewRepresentable {
         scrollView.hasHorizontalScroller = false
         scrollView.autohidesScrollers = true
 
-        let textView = NSTextView(frame: .zero)
+        let textView = JSONEditorTextView(frame: .zero)
         textView.delegate = context.coordinator
         textView.isEditable = true
         textView.isSelectable = true
         textView.isRichText = true
         textView.drawsBackground = false
         textView.font = JSONSyntaxHighlighter.font
-        textView.textColor = .labelColor
-        textView.insertionPointColor = .labelColor
+        textView.textColor = JSONSyntaxTheme.platformColor(for: .text)
+        textView.insertionPointColor = JSONSyntaxTheme.platformColor(for: .text)
         textView.isVerticallyResizable = true
         textView.isHorizontallyResizable = false
         textView.autoresizingMask = [.width]
@@ -258,6 +285,12 @@ private struct MacSyntaxHighlightedTextEditor: NSViewRepresentable {
         func textDidChange(_ notification: Notification) {
             guard !isApplying, let textView = notification.object as? NSTextView else { return }
             parent.text = textView.string
+            textView.needsDisplay = true
+        }
+
+        func textViewDidChangeSelection(_ notification: Notification) {
+            guard let textView = notification.object as? NSTextView else { return }
+            textView.needsDisplay = true
         }
 
         func update(_ textView: NSTextView, text: String) {
@@ -279,12 +312,32 @@ private struct MacSyntaxHighlightedTextEditor: NSViewRepresentable {
             textView.textStorage?.setAttributedString(JSONSyntaxHighlighter.attributedString(for: text))
             textView.setSelectedRange(clamped(selection, to: text.utf16.count))
             isApplying = false
+            textView.needsDisplay = true
         }
 
         private func clamped(_ range: NSRange, to length: Int) -> NSRange {
             NSRange(location: min(range.location, length), length: min(range.length, max(0, length - min(range.location, length))))
         }
     }
+}
+
+private final class JSONEditorTextView: NSTextView {
+    override func drawBackground(in rect: NSRect) {
+        super.drawBackground(in: rect)
+        drawActiveLine()
+    }
+
+    private func drawActiveLine() {
+        guard let layoutManager else { return }
+        let location = min(selectedRange().location, string.utf16.count)
+        let lineRange = (string as NSString).lineRange(for: NSRange(location: location, length: 0))
+        let glyphRange = layoutManager.glyphRange(forCharacterRange: lineRange, actualCharacterRange: nil)
+        layoutManager.enumerateLineFragments(forGlyphRange: glyphRange) { rect, _, _, _, _ in
+            JSONSyntaxTheme.activeLine.setFill()
+            NSBezierPath(rect: NSRect(x: 0, y: rect.minY + self.textContainerOrigin.y, width: self.bounds.width, height: rect.height)).fill()
+        }
+    }
+
 }
 #else
 private struct IOSSyntaxHighlightedTextEditor: UIViewRepresentable {
@@ -296,14 +349,14 @@ private struct IOSSyntaxHighlightedTextEditor: UIViewRepresentable {
     }
 
     func makeUIView(context: Context) -> UITextView {
-        let textView = UITextView()
+        let textView = JSONEditorTextView()
         textView.delegate = context.coordinator
         textView.backgroundColor = .clear
         textView.isEditable = true
         textView.isSelectable = true
         textView.font = JSONSyntaxHighlighter.font
-        textView.textColor = .label
-        textView.tintColor = .label
+        textView.textColor = JSONSyntaxTheme.platformColor(for: .text)
+        textView.tintColor = JSONSyntaxTheme.platformColor(for: .text)
         textView.textContainerInset = UIEdgeInsets(top: 10, left: 8, bottom: 10, right: 8)
         textView.autocorrectionType = .no
         textView.autocapitalizationType = .none
@@ -331,6 +384,11 @@ private struct IOSSyntaxHighlightedTextEditor: UIViewRepresentable {
         func textViewDidChange(_ textView: UITextView) {
             guard !isApplying else { return }
             parent.text = textView.text
+            textView.setNeedsDisplay()
+        }
+
+        func textViewDidChangeSelection(_ textView: UITextView) {
+            textView.setNeedsDisplay()
         }
 
         func update(_ textView: UITextView, text: String) {
@@ -352,10 +410,34 @@ private struct IOSSyntaxHighlightedTextEditor: UIViewRepresentable {
             textView.attributedText = JSONSyntaxHighlighter.attributedString(for: text)
             textView.selectedRange = clamped(selection, to: text.utf16.count)
             isApplying = false
+            textView.setNeedsDisplay()
         }
 
         private func clamped(_ range: NSRange, to length: Int) -> NSRange {
             NSRange(location: min(range.location, length), length: min(range.length, max(0, length - min(range.location, length))))
+        }
+    }
+}
+
+private final class JSONEditorTextView: UITextView {
+    override func draw(_ rect: CGRect) {
+        drawActiveLine()
+        super.draw(rect)
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        setNeedsDisplay()
+    }
+
+    private func drawActiveLine() {
+        let location = min(selectedRange.location, text.utf16.count)
+        let lineRange = (text as NSString).lineRange(for: NSRange(location: location, length: 0))
+        let glyphRange = layoutManager.glyphRange(forCharacterRange: lineRange, actualCharacterRange: nil)
+        let origin = CGPoint(x: textContainerInset.left, y: textContainerInset.top)
+        layoutManager.enumerateLineFragments(forGlyphRange: glyphRange) { rect, _, _, _, _ in
+            JSONSyntaxTheme.activeLine.setFill()
+            UIRectFill(CGRect(x: 0, y: rect.minY + origin.y, width: self.bounds.width, height: rect.height))
         }
     }
 }
