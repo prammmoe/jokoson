@@ -23,6 +23,8 @@ private enum FileReadResult: Sendable {
 
 @MainActor
 final class JSONWorkspace: ObservableObject {
+    private let historyStore: JSONHistoryStore
+
     @Published var mode: WorkspaceMode = .input
     @Published var rawText = ""
     @Published private(set) var document: JSONDocument?
@@ -35,6 +37,13 @@ final class JSONWorkspace: ObservableObject {
     @Published var isEmptyJSONAlertPresented = false
     @Published private(set) var viewerSearchFocusRequest = 0
     @Published private(set) var selectedPath: JSONPath = .root
+    @Published private(set) var history: [JSONHistoryEntry] = []
+    @Published private(set) var selectedHistoryID: UUID?
+
+    init(historyStore: JSONHistoryStore? = nil) {
+        self.historyStore = historyStore ?? JSONHistoryStore()
+        refreshHistory()
+    }
 
     var visibleRows: [JSONTreeRow] {
         guard let document else { return [] }
@@ -79,7 +88,7 @@ final class JSONWorkspace: ObservableObject {
         }
     }
 
-    func parse() {
+    func parse(historySource: JSONHistorySource? = nil, showsViewer: Bool = true) {
         let text = rawText
         isParsing = true
         parseError = nil
@@ -96,22 +105,22 @@ final class JSONWorkspace: ObservableObject {
 
         Task { [weak self] in
             let result = await task.value
-            self?.apply(result, sourceText: text)
+            self?.apply(result, sourceText: text, historySource: historySource, showsViewer: showsViewer)
         }
     }
 
     @discardableResult
-    func parseSynchronously() -> Result<JSONValue, JSONParseError> {
+    func parseSynchronously(historySource: JSONHistorySource? = nil, showsViewer: Bool = true) -> Result<JSONValue, JSONParseError> {
         do {
             let value = try JSONParser().parse(rawText)
-            apply(.success(value), sourceText: rawText)
+            apply(.success(value), sourceText: rawText, historySource: historySource, showsViewer: showsViewer)
             return .success(value)
         } catch let error as JSONParseError {
-            apply(.failure(error), sourceText: rawText)
+            apply(.failure(error), sourceText: rawText, historySource: historySource, showsViewer: showsViewer)
             return .failure(error)
         } catch {
             let parseError = JSONParseError(message: error.localizedDescription, offset: 0, line: 1, column: 1)
-            apply(.failure(parseError), sourceText: rawText)
+            apply(.failure(parseError), sourceText: rawText, historySource: historySource, showsViewer: showsViewer)
             return .failure(parseError)
         }
     }
@@ -138,7 +147,7 @@ final class JSONWorkspace: ObservableObject {
             case .success(let text):
                 rawText = text
                 mode = .input
-                parse()
+                parse(historySource: .file)
             case .failure(let message):
                 isParsing = false
                 notice = message
@@ -213,7 +222,73 @@ final class JSONWorkspace: ObservableObject {
         selectedPath = .root
     }
 
-    private func apply(_ result: Result<JSONValue, JSONParseError>, sourceText: String) {
+    func paste(_ text: String) {
+        rawText = text
+        mode = .input
+        selectedHistoryID = nil
+        notice = "Pasted from clipboard"
+        parse(historySource: .paste, showsViewer: false)
+    }
+
+    func validatedJSONText() -> String? {
+        do {
+            _ = try JSONParser().parse(rawText)
+            parseError = nil
+            return rawText
+        } catch let error as JSONParseError {
+            parseError = error
+            return nil
+        } catch {
+            parseError = JSONParseError(message: error.localizedDescription, offset: 0, line: 1, column: 1)
+            return nil
+        }
+    }
+
+    func saveToHistory() {
+        guard let text = validatedJSONText(), let entry = historyStore.add(sourceText: text, source: .manual) else { return }
+        refreshHistory()
+        selectedHistoryID = entry.id
+        notice = "Saved to history"
+    }
+
+    func loadHistory(_ entry: JSONHistoryEntry) {
+        rawText = entry.sourceText
+        selectedHistoryID = entry.id
+        parse()
+    }
+
+    func renameHistory(_ id: UUID, to title: String) {
+        historyStore.rename(id, to: title)
+        refreshHistory()
+    }
+
+    func setHistoryColor(_ color: JSONHistoryColor?, for id: UUID) {
+        historyStore.setColor(color, for: id)
+        refreshHistory()
+    }
+
+    func deleteHistory(_ id: UUID) {
+        historyStore.delete(id)
+        refreshHistory()
+        if selectedHistoryID == id { selectedHistoryID = nil }
+    }
+
+    func clearHistory() {
+        historyStore.clear()
+        refreshHistory()
+        selectedHistoryID = nil
+    }
+
+    private func refreshHistory() {
+        history = historyStore.entries
+    }
+
+    private func apply(
+        _ result: Result<JSONValue, JSONParseError>,
+        sourceText: String,
+        historySource: JSONHistorySource? = nil,
+        showsViewer: Bool = true
+    ) {
         isParsing = false
         switch result {
         case .success(let value):
@@ -221,7 +296,12 @@ final class JSONWorkspace: ObservableObject {
             parseError = nil
             expandedPaths = [.root]
             selectedPath = .root
-            mode = .viewer
+            mode = showsViewer ? .viewer : .input
+            if let source = historySource {
+                let entry = historyStore.add(sourceText: sourceText, source: source)
+                refreshHistory()
+                selectedHistoryID = entry?.id
+            }
         case .failure(let error):
             document = nil
             parseError = error

@@ -90,6 +90,9 @@ private struct CompactWorkspaceView: View {
 private struct RegularWorkspaceView: View {
     @ObservedObject var workspace: JSONWorkspace
     @State private var isMacSplitViewPresented = false
+    @State private var renamingHistoryItem: JSONHistoryEntry?
+    @State private var historyTitle = ""
+    @State private var isClearHistoryConfirmationPresented = false
 
     var body: some View {
         NavigationSplitView {
@@ -117,11 +120,18 @@ private struct RegularWorkspaceView: View {
 
                 Divider()
 
+                #if os(macOS)
+                HistorySidebar(
+                    workspace: workspace,
+                    renamingItem: $renamingHistoryItem,
+                    historyTitle: $historyTitle,
+                    isClearConfirmationPresented: $isClearHistoryConfirmationPresented
+                )
+                #else
                 if let document = workspace.document {
                     Label("Document ready", systemImage: "checkmark.circle.fill")
                         .font(.callout)
                         .foregroundStyle(.secondary)
-                        .accessibilityLabel("Document ready")
                     Text("\(document.sourceText.utf8.count.formatted()) bytes")
                         .font(.caption)
                         .foregroundStyle(.tertiary)
@@ -131,6 +141,7 @@ private struct RegularWorkspaceView: View {
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
+                #endif
 
                 Spacer()
             }
@@ -164,8 +175,118 @@ private struct RegularWorkspaceView: View {
         }
         .navigationSplitViewStyle(.balanced)
         .frame(minWidth: 960, minHeight: 600)
+        .alert("Rename History Item", isPresented: Binding(
+            get: { renamingHistoryItem != nil },
+            set: { if !$0 { renamingHistoryItem = nil } }
+        )) {
+            TextField("Name", text: $historyTitle)
+            Button("Cancel", role: .cancel) { renamingHistoryItem = nil }
+            Button("Rename") {
+                if let item = renamingHistoryItem {
+                    workspace.renameHistory(item.id, to: historyTitle)
+                }
+                renamingHistoryItem = nil
+            }
+        }
+        .confirmationDialog("Clear all JSON history?", isPresented: $isClearHistoryConfirmationPresented, titleVisibility: .visible) {
+            Button("Clear History", role: .destructive) { workspace.clearHistory() }
+        } message: {
+            Text("This permanently removes every saved JSON document from this device.")
+        }
     }
 }
+
+#if os(macOS)
+private struct HistorySidebar: View {
+    @ObservedObject var workspace: JSONWorkspace
+    @Binding var renamingItem: JSONHistoryEntry?
+    @Binding var historyTitle: String
+    @Binding var isClearConfirmationPresented: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("History")
+                    .font(.headline)
+                Spacer()
+                if !workspace.history.isEmpty {
+                    Button("Clear", role: .destructive) {
+                        isClearConfirmationPresented = true
+                    }
+                    .font(.caption)
+                    .buttonStyle(.borderless)
+                }
+            }
+
+            if workspace.history.isEmpty {
+                Text("Parsed JSON documents will appear here.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 2) {
+                        ForEach(workspace.history) { item in
+                            Button {
+                                workspace.loadHistory(item)
+                            } label: {
+                                HStack(spacing: 8) {
+                                    Circle()
+                                        .fill(historyColor(item.color))
+                                        .frame(width: 9, height: 9)
+                                        .opacity(item.color == nil ? 0 : 1)
+                                    Text(item.title)
+                                        .lineLimit(1)
+                                    Spacer(minLength: 0)
+                                }
+                                .padding(.horizontal, 8)
+                                .frame(height: 28)
+                                .background(item.id == workspace.selectedHistoryID ? Color.accentColor.opacity(0.2) : .clear, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                            }
+                            .buttonStyle(.plain)
+                            .contextMenu {
+                                Button("Rename") {
+                                    historyTitle = item.title
+                                    renamingItem = item
+                                }
+                                Menu("Color") {
+                                    Button("No Color") { workspace.setHistoryColor(nil, for: item.id) }
+                                    Divider()
+                                    ForEach(JSONHistoryColor.allCases) { color in
+                                        Button {
+                                            workspace.setHistoryColor(color, for: item.id)
+                                        } label: {
+                                            Label(color.displayName, systemImage: "circle.fill")
+                                                .foregroundStyle(historyColor(color))
+                                        }
+                                    }
+                                }
+                                Divider()
+                                Button("Delete", role: .destructive) { workspace.deleteHistory(item.id) }
+                            }
+                            .accessibilityIdentifier("historyItem-\(item.id.uuidString)")
+                        }
+                    }
+                }
+            }
+        }
+        .accessibilityIdentifier("historySidebar")
+    }
+
+    private func historyColor(_ color: JSONHistoryColor?) -> Color {
+        switch color {
+        case .red: .red
+        case .orange: .orange
+        case .yellow: .yellow
+        case .green: .green
+        case .blue: .blue
+        case .purple: .purple
+        case .gray: .gray
+        case nil: .clear
+        }
+    }
+}
+#endif
 
 #if os(macOS)
 private struct MacSplitWorkspaceView: View {
@@ -281,8 +402,7 @@ private struct InputSurface: View {
             HStack(spacing: 10) {
                 Button {
                     if let pasted = PasteboardService.read() {
-                        workspace.rawText = pasted
-                        workspace.notice = "Pasted from clipboard"
+                        workspace.paste(pasted)
                     }
                 } label: {
                     Label("Paste", systemImage: "doc.on.clipboard")
@@ -291,6 +411,15 @@ private struct InputSurface: View {
                 .accessibilityIdentifier("pasteButton")
 
                 Spacer()
+
+                Button {
+                    workspace.saveToHistory()
+                } label: {
+                    Label("Save to history", systemImage: "tray.and.arrow.down")
+                }
+                .buttonStyle(.bordered)
+                .disabled(workspace.rawText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || workspace.isParsing)
+                .accessibilityIdentifier("saveJSONButton")
 
                 Button {
                     workspace.parse()
@@ -310,6 +439,7 @@ private struct InputSurface: View {
         .padding(24)
         .frame(maxWidth: 980, maxHeight: .infinity, alignment: .top)
     }
+
 }
 
 private struct ViewerSurface: View {
@@ -627,7 +757,7 @@ private func WorkspaceToolbar(
         if workspace.mode == .input {
             Button {
                 if let pasted = PasteboardService.read() {
-                    workspace.rawText = pasted
+                    workspace.paste(pasted)
                 }
             } label: {
                 Label("Paste", systemImage: "doc.on.clipboard")
@@ -699,8 +829,7 @@ struct JokosonCommands: Commands {
                 .keyboardShortcut("o", modifiers: [.command])
             Button("Paste JSON") {
                 if let pasted = PasteboardService.read() {
-                    workspace.rawText = pasted
-                    workspace.mode = .input
+                    workspace.paste(pasted)
                 }
             }
             .keyboardShortcut("v", modifiers: [.command])

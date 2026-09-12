@@ -6,6 +6,8 @@ Jokoson is a native, lightweight JSON viewer for macOS and iOS. It lets you past
 
 - Paste JSON from the clipboard or edit JSON directly
 - Open local `.json` files
+- Keep an unlimited local history of successfully parsed pasted and opened JSON
+- Rename, color-tag, reopen, or remove history entries
 - Validate malformed JSON with line and column details
 - View objects and arrays in a conventional JSON tree
 - Expand and collapse individual nodes
@@ -152,7 +154,7 @@ Jokoson/
 
 ## Privacy and data handling
 
-Jokoson processes JSON locally in memory. It does not send JSON to a server, store document history, require an account, or use Firebase. Imported files are read locally and are not copied to a cloud service.
+Jokoson processes JSON locally. Successfully parsed pasted and imported JSON documents are stored in the app's on-device history until you remove them; nothing is sent to a server or cloud service. The app requires no account and uses no Firebase.
 
 ## Troubleshooting
 

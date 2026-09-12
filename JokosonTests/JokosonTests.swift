@@ -97,6 +97,19 @@ struct JokosonTests {
         #expect(workspace.isEmptyJSONAlertPresented)
     }
 
+    @Test @MainActor func workspaceOnlyProvidesValidJSONForSaving() {
+        let workspace = JSONWorkspace(historyStore: JSONHistoryStore(inMemory: true))
+
+        workspace.rawText = "{\"name\":\"Ada\"}"
+        #expect(workspace.validatedJSONText() == "{\"name\":\"Ada\"}")
+        workspace.saveToHistory()
+        #expect(workspace.history.first?.source == .manual)
+
+        workspace.rawText = "{"
+        #expect(workspace.validatedJSONText() == nil)
+        #expect(workspace.parseError != nil)
+    }
+
     @Test @MainActor func workspaceRequestsViewerSearchFocusOnlyInViewerMode() {
         let workspace = JSONWorkspace()
 
@@ -109,6 +122,50 @@ struct JokosonTests {
 
         #expect(workspace.mode == .viewer)
         #expect(workspace.viewerSearchFocusRequest == 1)
+    }
+
+    @Test @MainActor func historyPersistsParsedPastesAndFiles() {
+        let workspace = JSONWorkspace(historyStore: JSONHistoryStore(inMemory: true))
+
+        workspace.rawText = "{\"paste\":true}"
+        _ = workspace.parseSynchronously(historySource: .paste)
+        workspace.rawText = "{\"paste\":true}"
+        _ = workspace.parseSynchronously(historySource: .file)
+        workspace.rawText = "{\"file\":true}"
+        _ = workspace.parseSynchronously(historySource: .file)
+
+        #expect(workspace.history.count == 2)
+        #expect(workspace.history.map(\.sourceText) == ["{\"file\":true}", "{\"paste\":true}"])
+        #expect(workspace.history.map(\.source) == [.file, .file])
+    }
+
+    @Test @MainActor func invalidJSONDoesNotEnterHistoryAndEntriesCanBeManaged() {
+        let workspace = JSONWorkspace(historyStore: JSONHistoryStore(inMemory: true))
+
+        workspace.rawText = "{"
+        _ = workspace.parseSynchronously(historySource: .paste)
+        #expect(workspace.history.isEmpty)
+
+        workspace.rawText = "{\"name\":\"Ada\"}"
+        _ = workspace.parseSynchronously(historySource: .paste)
+        guard let item = workspace.history.first else {
+            Issue.record("Expected saved history")
+            return
+        }
+        workspace.renameHistory(item.id, to: "Ada")
+        workspace.setHistoryColor(.blue, for: item.id)
+        #expect(workspace.history.first?.title == "Ada")
+        #expect(workspace.history.first?.color == .blue)
+
+        workspace.deleteHistory(item.id)
+        #expect(workspace.history.isEmpty)
+
+        workspace.rawText = "{\"one\":1}"
+        _ = workspace.parseSynchronously(historySource: .paste)
+        workspace.rawText = "{\"two\":2}"
+        _ = workspace.parseSynchronously(historySource: .paste)
+        workspace.clearHistory()
+        #expect(workspace.history.isEmpty)
     }
 
     @Test @MainActor func tableRowsFollowSelectedContainerOrScalarParent() {
